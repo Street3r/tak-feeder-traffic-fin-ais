@@ -1,4 +1,9 @@
-*.pem
-node_modules
+__pycache__/
+*.py[cod]
+*.egg-info/
+build/
+dist/
+.venv/
 .env
-test.xml
+certs/
+data/
