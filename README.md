@@ -141,6 +141,10 @@ Changes in this fork (Street3r):
   - pytak reconnects to TAK after outages without losing state.
   - Standard variable names with the old ones as aliases; health check;
     unprivileged container; tests and CI.
+- 2026-10-15
+  - Every event of a send round reaches TAK. pytak's send queue holds 100
+    events and dropped the oldest when full, so rounds of more than 100
+    lost the rest.
 
 ## License
 
