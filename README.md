@@ -55,8 +55,8 @@ Source: Fintraffic / digitraffic.fi, CC BY 4.0
 
 ### Send rate
 
-Vessels that moved or got new metadata are sent every `UPDATE_INTERVAL`
-seconds, the rest every `REFRESH_INTERVAL` seconds. Vessels silent for
+A moving vessel is sent every `SEND_MOVING_INTERVAL` seconds, a stopped or
+moored one every `SEND_STATIONARY_INTERVAL` seconds. Vessels silent for
 `MAX_AGE` seconds are dropped. Names, IMO numbers and types are saved to
 `DATA_DIR`, so after a restart ships have names right away instead of waiting
 for their next metadata message.
@@ -77,9 +77,10 @@ for their next metadata message.
 | `SHADOWFLEET` | `0` | See *Affiliation* |
 | `SHADOWFLEET_URL` | tak-shadowfleet-id `main` | Shadow fleet list |
 | `DATA_DIR` | `/var/lib/tak-feeder` | Metadata cache and the saved shadow fleet list |
-| `UPDATE_INTERVAL` | `5` | Seconds between send rounds (old name `UPDATE_RATE`) |
-| `REFRESH_INTERVAL` | `30` | Re-send unmoved vessels this often |
-| `STALE_SECONDS` | `90` | Marker lifetime without new data |
+| `SEND_MOVING_INTERVAL` | `5` | Seconds between sends of a moving vessel, min 1 (old name `UPDATE_INTERVAL` or `UPDATE_RATE`) |
+| `SEND_STATIONARY_INTERVAL` | `60` | Seconds between sends of a stopped vessel, min 30 (old name `REFRESH_INTERVAL`) |
+| `STATIONARY_SPEED` | `0.5` | Below this speed (m/s) a vessel counts as stopped |
+| `STALE_SECONDS` | `180` | Marker lifetime; always at least 3 send intervals |
 | `MAX_AGE` | `600` | Stop sending a vessel silent this long |
 | `TIMEZONE` | `Europe/Helsinki` | Time zone of the last position time |
 | `HEALTH_MAX_SILENCE` | `300` | Unhealthy when no AIS data for this long |
@@ -145,6 +146,12 @@ Changes in this fork (Street3r):
   - Every event of a send round reaches TAK. pytak's send queue holds 100
     events and dropped the oldest when full, so rounds of more than 100
     lost the rest.
+- 2026-10-19
+  - Send intervals shared by all feeders: a moving vessel is sent every
+    `SEND_MOVING_INTERVAL` (5 s), a stopped one every
+    `SEND_STATIONARY_INTERVAL` (60 s) and at once when it stops. The
+    latest position is re-sent at that rate even when the source has
+    nothing new. The old variable names still work.
 
 ## License
 

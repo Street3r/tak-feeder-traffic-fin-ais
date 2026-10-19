@@ -26,7 +26,7 @@ async def main() -> None:
     health = Health(max_silence=env_float("HEALTH_MAX_SILENCE", 300.0))
     source = AisSource(settings, health)
     try:
-        await run_feeder(tak, source, settings.update_interval)
+        await run_feeder(tak, source, settings.send.moving)
     finally:
         source.save_cache()
 

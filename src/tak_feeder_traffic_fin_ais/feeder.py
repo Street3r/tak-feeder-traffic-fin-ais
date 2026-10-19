@@ -19,8 +19,8 @@ from zoneinfo import ZoneInfo
 
 from . import __version__
 from .ais_types import category, describe
-from .common import (Health, as_float, cot_event, env, env_bool, env_float, env_list,
-                     remarks_text, start_mqtt)
+from .common import (Health, SendPolicy, SendSchedule, as_float, cot_event, env, env_bool,
+                     env_float, env_list, remarks_text, start_mqtt)
 from .shadowfleet import ShadowFleet, SHADOWFLEET_URL
 
 LOG = logging.getLogger("tak_feeder_traffic_fin_ais")
@@ -46,9 +46,7 @@ class Settings:
     mqtt_username: str = "digitraffic"
     mqtt_password: str = "digitrafficPassword"
     digitraffic_user: str = "tak-feeder-traffic-fin-ais"
-    update_interval: float = 5.0
-    refresh_interval: float = 30.0
-    stale_seconds: float = 90.0
+    send: SendPolicy = field(default_factory=SendPolicy)
     max_age: float = 600.0
     ais_types: list[int] = field(default_factory=list)
     foc_suspect: bool = False
@@ -79,9 +77,7 @@ class Settings:
             mqtt_username=env("MQTT_USERNAME", d.mqtt_username),
             mqtt_password=env("MQTT_PASSWORD", d.mqtt_password),
             digitraffic_user=env("DIGITRAFFIC_USER", d.digitraffic_user),
-            update_interval=env_float("UPDATE_INTERVAL", d.update_interval, "UPDATE_RATE"),
-            refresh_interval=env_float("REFRESH_INTERVAL", d.refresh_interval),
-            stale_seconds=env_float("STALE_SECONDS", d.stale_seconds),
+            send=SendPolicy.from_env(moving_aliases=("UPDATE_INTERVAL", "UPDATE_RATE")),
             max_age=env_float("MAX_AGE", d.max_age),
             ais_types=types,
             foc_suspect=env_bool("AIS_FOC_SUSPECT", False),
@@ -122,8 +118,11 @@ class Vessel:
     ais_type: int = 0
     destination: str = ""
     seen: float = 0.0
-    sent: float = 0.0
-    changed: bool = False
+
+    @property
+    def speed(self) -> Optional[float]:
+        """Speed over ground in m/s (None when the vessel does not report it)."""
+        return None if self.sog is None else self.sog * KNOT
 
 
 def _clean(value: Any) -> str:
@@ -149,6 +148,7 @@ class AisSource:
             self.countries[mid] = [affil, country]
         self.shadow = ShadowFleet()
         self.vessels: dict[str, Vessel] = {}
+        self.schedule = SendSchedule(settings.send)
         self.cache: dict[str, dict[str, Any]] = {}  # metadata of earlier runs
         self.lock = threading.Lock()
         self.messages = 0
@@ -175,7 +175,6 @@ class AisSource:
                 lat, lon = as_float(data.get("lat")), as_float(data.get("lon"))
                 if lat is None or lon is None:
                     return
-                v.changed = v.changed or (v.lat, v.lon) != (lat, lon)
                 v.lat, v.lon = lat, lon
                 sog = as_float(data.get("sog"))
                 v.sog = None if sog is None or sog >= 102.3 else sog  # 102.3 = n/a
@@ -195,7 +194,6 @@ class AisSource:
                     v.imo = str(data["imo"])
                 if isinstance(data.get("type"), int) and data["type"]:
                     v.ais_type = data["type"]
-                v.changed = True
 
     def _new_vessel(self, mmsi: str) -> Vessel:
         """New vessel, with its name etc. from the cache if known."""
@@ -258,26 +256,29 @@ class AisSource:
             lat=v.lat or 0.0, lon=v.lon or 0.0,
             callsign=display,
             remarks=remarks_text(lines, source, tags),
-            stale=self.s.stale_seconds,
+            stale=self.s.send.stale_for(self.s.send.interval(v.speed)),
             course=v.cog or 0.0,
             speed=(v.sog or 0.0) * KNOT,
         )
 
     def collect(self, now: Optional[float] = None) -> list[bytes]:
-        """Changed vessels, plus unchanged ones every refresh interval."""
+        """Vessels due by the send policy: moving ones every SEND_MOVING_INTERVAL,
+        stopped ones every SEND_STATIONARY_INTERVAL, the latest position again
+        if no newer one has arrived."""
         now = time.monotonic() if now is None else now
         events = []
         with self.lock:
             for mmsi in [m for m, v in self.vessels.items() if now - v.seen > self.s.max_age]:
                 del self.vessels[mmsi]
+                self.schedule.forget(mmsi)
             for v in self.vessels.values():
                 if v.lat is None or v.lon is None:
                     continue
                 if self.s.ais_types and v.ais_type not in self.s.ais_types:
                     continue
-                if v.changed or now - v.sent >= self.s.refresh_interval:
+                if self.schedule.due(v.mmsi, v.speed, now):
                     events.append(self.build(v))
-                    v.sent, v.changed = now, False
+                    self.schedule.mark(v.mmsi, v.speed, now)
             messages, self.messages = self.messages, 0
         if self.health is not None:
             if messages:
