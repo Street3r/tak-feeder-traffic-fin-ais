@@ -94,9 +94,14 @@ class AisTest(unittest.TestCase):
         src = self.make(ais_types=[60])
         self.assertIsNone(self.event(src))
         src = self.make()
-        self.event(src)
+        self.event(src)  # 10 kn: moving, every 5 s
         self.assertEqual(src.collect(1), [])
-        self.assertEqual(len(src.collect(31)), 1)
+        self.assertEqual(len(src.collect(5)), 1)  # same position re-sent
+        moored = dict(LOC, sog=0.1, navStat=5)
+        src.handle("vessels-v2/230123456/location", json.dumps(moored).encode(), now=6)
+        self.assertEqual(len(src.collect(6)), 1)  # stopped: sent at once
+        self.assertEqual(src.collect(30), [])
+        self.assertEqual(len(src.collect(66)), 1)  # stopped: every 60 s
         self.assertEqual(src.collect(700), [])  # silent too long: dropped
 
     def test_not_available_values(self) -> None:
@@ -131,7 +136,7 @@ class AisTest(unittest.TestCase):
 
     def test_legacy_env(self) -> None:
         with mock.patch.dict("os.environ", {"UPDATE_RATE": "7"}, clear=True):
-            self.assertEqual(feeder.Settings.from_env().update_interval, 7.0)
+            self.assertEqual(feeder.Settings.from_env().send.moving, 7.0)
         with mock.patch.dict("os.environ", {"AIS_AFFIL_OVERRIDES": "538:s, 626:suspect"},
                              clear=True):
             self.assertEqual(feeder.Settings.from_env().affil_overrides,
